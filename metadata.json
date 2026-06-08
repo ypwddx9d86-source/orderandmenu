@@ -1,0 +1,6 @@
+{
+  "name": "Bistro Ordering App",
+  "description": "A responsive digital menu and real-time kitchen order dashboard with local persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
