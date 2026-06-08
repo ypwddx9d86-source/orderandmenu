@@ -7,21 +7,18 @@ import ClientMenu from "./components/ClientMenu";
 import AdminDashboard from "./components/AdminDashboard";
 import { Tablet, Smartphone, Terminal, Cpu, Clock, HelpCircle, UtensilsCrossed } from "lucide-react";
 
+// Firebase imports
+import { db, handleFirestoreError, OperationType } from "./firebase";
+import { collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, getDocs } from "firebase/firestore";
+
 export default function App() {
   // Current View Toggle: "client" | "admin"
   const [currentView, setCurrentView] = useState<"client" | "admin">("client");
 
-  // Dynamic state list for food and drinks menu items
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
-    try {
-      const stored = localStorage.getItem("bistro_menu_items");
-      return stored ? JSON.parse(stored) : MENU_ITEMS;
-    } catch {
-      return MENU_ITEMS;
-    }
-  });
+  // Dynamic state list for food and drinks menu items (hooked to Firestore)
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
-  // Client Table selection
+  // Client Table selection (stored locally in browser session)
   const [selectedTable, setSelectedTable] = useState<string | null>(() => {
     try {
       const stored = localStorage.getItem("bistro_table");
@@ -31,7 +28,7 @@ export default function App() {
     }
   });
 
-  // Client Cart items list
+  // Client Cart items list (stored locally in browser session)
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const stored = localStorage.getItem("bistro_cart");
@@ -42,63 +39,12 @@ export default function App() {
   });
 
   // Admin Active Orders queue (Pending, Preparing)
-  const [orders, setOrders] = useState<Order[]>(() => {
-    try {
-      const stored = localStorage.getItem("bistro_orders");
-      if (stored) {
-        return JSON.parse(stored);
-      }
-      
-      // Seed initial active order so the kitchen isn't empty initially!
-      const initialOrders: Order[] = [
-        {
-          id: "ORD-7192",
-          tableNumber: "G1",
-          items: [
-            { id: "f1", name: "Artisan Truffle Wagyu Burger", price: 18.50, quantity: 1, category: "Food" },
-            { id: "d1", name: "Signature Smoked Wood Old Fashioned", price: 14.00, quantity: 2, category: "Drinks" }
-          ],
-          totalPrice: 46.50,
-          timestamp: new Date(Date.now() - 8 * 60000).toISOString(), // 8 minutes ago
-          status: "Preparing",
-          note: "Medium-rare burger patty, extra smoked glass smoke please!"
-        }
-      ];
-      return initialOrders;
-    } catch {
-      return [];
-    }
-  });
+  const [orders, setOrders] = useState<Order[]>([]);
 
   // Admin Historical Orders (Served, Completed/Cleared)
-  const [historyOrders, setHistoryOrders] = useState<Order[]>(() => {
-    try {
-      const stored = localStorage.getItem("bistro_history_orders");
-      if (stored) {
-        return JSON.parse(stored);
-      }
-      
-      // Seed initial past served order so history is pre-seeded beautifully!
-      const initialHistory: Order[] = [
-        {
-          id: "ORD-3304",
-          tableNumber: "B2",
-          items: [
-            { id: "f3", name: "Crispy Calamari & Citrus Dust", price: 13.50, quantity: 1, category: "Food" },
-            { id: "d5", name: "Organic Ceremonial Matcha Lemonade", price: 7.00, quantity: 1, category: "Drinks" }
-          ],
-          totalPrice: 20.50,
-          timestamp: new Date(Date.now() - 25 * 60000).toISOString(), // 25 minutes ago
-          status: "Served"
-        }
-      ];
-      return initialHistory;
-    } catch {
-      return [];
-    }
-  });
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
 
-  // Sync state to local storage on change
+  // Local sync of browser UI preferences
   useEffect(() => {
     try {
       if (selectedTable) {
@@ -119,29 +65,94 @@ export default function App() {
     }
   }, [cart]);
 
+  // Real-time Firestore sync and automatic seeding logic
   useEffect(() => {
-    try {
-      localStorage.setItem("bistro_orders", JSON.stringify(orders));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [orders]);
+    const unsubMenu = onSnapshot(
+      collection(db, "menu_items"),
+      async (snapshot) => {
+        if (snapshot.empty) {
+          // Automatic database catalog bootstrap
+          try {
+            const seedPromises = MENU_ITEMS.map((item) =>
+              setDoc(doc(db, "menu_items", item.id), item)
+            );
+            await Promise.all(seedPromises);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.WRITE, "menu_items_seed");
+          }
+        } else {
+          const list: MenuItem[] = [];
+          snapshot.forEach((d) => {
+            list.push(d.data() as MenuItem);
+          });
+          setMenuItems(list);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "menu_items");
+      }
+    );
 
-  useEffect(() => {
-    try {
-      localStorage.setItem("bistro_history_orders", JSON.stringify(historyOrders));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [historyOrders]);
+    const unsubOrders = onSnapshot(
+      collection(db, "orders"),
+      async (snapshot) => {
+        if (snapshot.empty) {
+          // Automatic live and historical ticket queue seeding
+          const initialOrders: Order[] = [
+            {
+              id: "ORD-7192",
+              tableNumber: "G1",
+              items: [
+                { id: "f1", name: "Artisan Truffle Wagyu Burger", price: 18.50, quantity: 1, category: "Food" },
+                { id: "d1", name: "Signature Smoked Wood Old Fashioned", price: 14.00, quantity: 2, category: "Drinks" }
+              ],
+              totalPrice: 46.50,
+              timestamp: new Date(Date.now() - 8 * 60000).toISOString(),
+              status: "Preparing",
+              note: "Medium-rare burger patty, extra smoked glass smoke please!"
+            },
+            {
+              id: "ORD-3304",
+              tableNumber: "B2",
+              items: [
+                { id: "f3", name: "Crispy Calamari & Citrus Dust", price: 13.50, quantity: 1, category: "Food" },
+                { id: "d5", name: "Organic Ceremonial Matcha Lemonade", price: 7.00, quantity: 1, category: "Drinks" }
+              ],
+              totalPrice: 20.50,
+              timestamp: new Date(Date.now() - 25 * 60000).toISOString(),
+              status: "Served"
+            }
+          ];
+          try {
+            const seedPromises = initialOrders.map((ord) =>
+              setDoc(doc(db, "orders", ord.id), ord)
+            );
+            await Promise.all(seedPromises);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.WRITE, "orders_seed");
+          }
+        } else {
+          const list: Order[] = [];
+          snapshot.forEach((d) => {
+            list.push(d.data() as Order);
+          });
+          // Sort descending by placement timestamp
+          list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-  useEffect(() => {
-    try {
-      localStorage.setItem("bistro_menu_items", JSON.stringify(menuItems));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [menuItems]);
+          setOrders(list.filter((o) => o.status === "Pending" || o.status === "Preparing"));
+          setHistoryOrders(list.filter((o) => o.status === "Served" || o.status === "Completed"));
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, "orders");
+      }
+    );
+
+    return () => {
+      unsubMenu();
+      unsubOrders();
+    };
+  }, []);
 
   // Handle Client placing order
   const handlePlaceOrder = async (note: string) => {
@@ -163,46 +174,35 @@ export default function App() {
       note: note.trim() ? note.trim() : undefined
     };
 
-    // Add new order to top of list
-    setOrders(prev => [newOrder, ...prev]);
-    // Clear client's cart upon success
-    setCart([]);
+    try {
+      await setDoc(doc(db, "orders", newOrder.id), newOrder);
+      // Clear client's cart upon success
+      setCart([]);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `orders/${newOrder.id}`);
+    }
   };
 
   // Switch Order Status helper
-  const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
-    if (status === "Served" || status === "Completed") {
-      const orderToMove = orders.find(order => order.id === orderId);
-      if (orderToMove) {
-        const archivedOrder: Order = { ...orderToMove, status };
-        setHistoryOrders(prev => {
-          if (prev.some(o => o.id === orderId)) return prev;
-          return [archivedOrder, ...prev];
-        });
-        setOrders(prev => prev.filter(order => order.id !== orderId));
-        return;
-      }
+  const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus) => {
+    try {
+      await updateDoc(doc(db, "orders", orderId), { status });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
-    setOrders(prev =>
-      prev.map(order => order.id === orderId ? { ...order, status } : order)
-    );
   };
 
   // Remove/Wipe specific order and archive it to history
-  const handleClearOrder = (orderId: string) => {
-    const orderToMove = orders.find(order => order.id === orderId);
-    if (orderToMove) {
-      const archivedOrder: Order = { ...orderToMove, status: "Completed" };
-      setHistoryOrders(prev => {
-        if (prev.some(o => o.id === orderId)) return prev;
-        return [archivedOrder, ...prev];
-      });
+  const handleClearOrder = async (orderId: string) => {
+    try {
+      await updateDoc(doc(db, "orders", orderId), { status: "Completed" });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
-    setOrders(prev => prev.filter(order => order.id !== orderId));
   };
 
   // Simulate or seed a sample customer order directly from the dashboard
-  const handleAddSampleOrder = () => {
+  const handleAddSampleOrder = async () => {
     const randomTable = TABLE_OPTIONS[Math.floor(Math.random() * TABLE_OPTIONS.length)];
     
     if (menuItems.length === 0) return;
@@ -244,34 +244,55 @@ export default function App() {
       note: randomNote ? randomNote : undefined
     };
 
-    setOrders(prev => [simulated, ...prev]);
-  };
-
-  // Reset all application data back to defaults
-  const handleResetAllData = () => {
-    if (window.confirm("Are you sure you want to completely erase the active kitchen board and order history?")) {
-      setOrders([]);
-      setHistoryOrders([]);
-      setCart([]);
-      localStorage.removeItem("bistro_orders");
-      localStorage.removeItem("bistro_history_orders");
-      localStorage.removeItem("bistro_cart");
+    try {
+      await setDoc(doc(db, "orders", simulated.id), simulated);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `orders/${simulated.id}`);
     }
   };
 
-  const handleAddMenuItem = (newItem: MenuItem) => {
-    setMenuItems(prev => [...prev, newItem]);
+  // Reset all application data back to defaults
+  const handleResetAllData = async () => {
+    if (window.confirm("Are you sure you want to completely erase the active kitchen board and order history?")) {
+      try {
+        setCart([]);
+        const snapshot = await getDocs(collection(db, "orders"));
+        const batchPromises = snapshot.docs.map(d => deleteDoc(doc(db, "orders", d.id)));
+        await Promise.all(batchPromises);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, "orders");
+      }
+    }
   };
 
-  const handleDeleteMenuItem = (itemId: string) => {
-    setMenuItems(prev => prev.filter(it => it.id !== itemId));
-    setCart(prev => prev.filter(c => c.menuItem.id !== itemId));
+  const handleAddMenuItem = async (newItem: MenuItem) => {
+    try {
+      await setDoc(doc(db, "menu_items", newItem.id), newItem);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `menu_items/${newItem.id}`);
+    }
   };
 
-  const handleResetMenuItems = () => {
+  const handleDeleteMenuItem = async (itemId: string) => {
+    try {
+      await deleteDoc(doc(db, "menu_items", itemId));
+      setCart(prev => prev.filter(c => c.menuItem.id !== itemId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `menu_items/${itemId}`);
+    }
+  };
+
+  const handleResetMenuItems = async () => {
     if (window.confirm("Are you sure you want to restore the default French bistro food and drinks menu? This will discard all custom additions.")) {
-      setMenuItems(MENU_ITEMS);
-      localStorage.removeItem("bistro_menu_items");
+      try {
+        const snapshot = await getDocs(collection(db, "menu_items"));
+        const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, "menu_items", d.id)));
+        await Promise.all(deletePromises);
+        const seedPromises = MENU_ITEMS.map(item => setDoc(doc(db, "menu_items", item.id), item));
+        await Promise.all(seedPromises);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, "menu_items");
+      }
     }
   };
 
@@ -308,7 +329,7 @@ export default function App() {
     });
   }, [menuItems, orders, historyOrders]);
 
-  const handleSimulateItemOrders = (itemId: string, count: number) => {
+  const handleSimulateItemOrders = async (itemId: string, count: number) => {
     const item = menuItems.find(it => it.id === itemId);
     if (!item) return;
 
@@ -329,7 +350,11 @@ export default function App() {
       status: "Completed"
     };
 
-    setHistoryOrders(prev => [simulated, ...prev]);
+    try {
+      await setDoc(doc(db, "orders", simulated.id), simulated);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `orders/${simulated.id}`);
+    }
   };
 
   const activePendingOrdersCount = orders.filter(o => o.status === "Pending" || o.status === "Preparing").length;

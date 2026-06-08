@@ -1,0 +1,98 @@
+{
+  "entities": {
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "A food or drink delicacy available in the bistro menu",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "price": {
+          "type": "number"
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Food",
+            "Drinks"
+          ]
+        },
+        "popular": {
+          "type": "boolean"
+        },
+        "isVegetarian": {
+          "type": "boolean"
+        },
+        "imageEmoji": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "price",
+        "category"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "An order ticket placed by a customer at a table",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tableNumber": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array"
+        },
+        "totalPrice": {
+          "type": "number"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Pending",
+            "Preparing",
+            "Served",
+            "Completed"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tableNumber",
+        "items",
+        "totalPrice",
+        "timestamp",
+        "status"
+      ]
+    }
+  },
+  "firestore": {
+    "/menu_items/{menuItemId}": {
+      "schema": "MenuItem",
+      "description": "Bistro menu card catalog items"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Live and history orders placed by table customers"
+    }
+  }
+}
